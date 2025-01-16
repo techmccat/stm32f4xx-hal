@@ -310,14 +310,14 @@ pub enum Ocm {
 pub use pac::tim1::cr1::CMS as CenterAlignedMode;
 
 /// Wrapper type that indicates which register of the contained timer to use for DMA.
-pub struct CCR<T, const C: u8>(T);
+pub struct CCR<T, const C: u8>(pub T);
 pub type CCR1<T> = CCR<T, 0>;
 pub type CCR2<T> = CCR<T, 1>;
 pub type CCR3<T> = CCR<T, 2>;
 pub type CCR4<T> = CCR<T, 3>;
 
 /// Wrapper type that indicates which register of the contained timer to use for DMA.
-pub struct DMAR<T>(T);
+pub struct DMAR<T>(pub T);
 
 mod sealed {
     use super::{BitFlags, CenterAlignedMode, Event, Flag, IdleState, Ocm, Polarity};
