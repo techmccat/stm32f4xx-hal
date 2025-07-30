@@ -56,7 +56,7 @@
 
 use core::marker::PhantomData;
 
-use crate::pac;
+use crate::pac::{self, RCC};
 pub mod alt;
 mod convert;
 pub use convert::PinMode;
@@ -76,23 +76,13 @@ pub use embedded_hal_02::digital::v2::PinState;
 
 use core::fmt;
 
-/// A filler pin type
-#[derive(Debug, Default)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct NoPin<Otype = PushPull>(PhantomData<Otype>);
-impl<Otype> NoPin<Otype> {
-    pub fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
 /// Extension trait to split a GPIO peripheral in independent pins and registers
 pub trait GpioExt {
     /// The parts to split the GPIO into
     type Parts;
 
     /// Splits the GPIO block into independent pins and registers
-    fn split(self) -> Self::Parts;
+    fn split(self, rcc: &mut RCC) -> Self::Parts;
 }
 
 /// Id, port and mode for any pin
@@ -127,7 +117,7 @@ pub enum Pull {
     Down = 2,
 }
 
-impl From<Pull> for pac::gpioa::pupdr::PUPDR0 {
+impl From<Pull> for pac::gpioa::pupdr::PULL {
     fn from(value: Pull) -> Self {
         match value {
             Pull::Down => Self::PullDown,
@@ -206,7 +196,7 @@ pub enum Speed {
     VeryHigh = 3,
 }
 
-impl From<Speed> for pac::gpioa::ospeedr::OSPEEDR0 {
+impl From<Speed> for pac::gpioa::ospeedr::OUTPUT_SPEED {
     fn from(value: Speed) -> Self {
         match value {
             Speed::Low => Self::LowSpeed,
@@ -568,7 +558,7 @@ macro_rules! gpio {
     ]) => {
         /// GPIO
         pub mod $gpiox {
-            use crate::pac::$GPIOX;
+            use crate::pac::{$GPIOX, RCC};
             use crate::rcc::{Enable, Reset};
 
             /// GPIO parts
@@ -582,12 +572,10 @@ macro_rules! gpio {
             impl super::GpioExt for $GPIOX {
                 type Parts = Parts;
 
-                fn split(self) -> Parts {
-                    unsafe {
-                        // Enable clock.
-                        $GPIOX::enable_unchecked();
-                        $GPIOX::reset_unchecked();
-                    }
+                fn split(self, rcc: &mut RCC) -> Parts {
+                    // Enable clock.
+                    $GPIOX::enable(rcc);
+                    $GPIOX::reset(rcc);
                     Parts {
                         $(
                             $pxi: $PXi::new(),

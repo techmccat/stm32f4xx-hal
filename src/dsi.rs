@@ -3,7 +3,7 @@
 //! Interface with MIPI D-PHY
 
 use crate::ltdc::DisplayConfig;
-use crate::rcc::{Clocks, Enable};
+use crate::rcc::{Enable, Rcc};
 use crate::{pac::DSI, time::Hertz};
 use core::cmp::{max, min};
 use embedded_display_controller::dsi::{DsiHostCtrlIo, DsiReadCommand, DsiWriteCommand};
@@ -159,23 +159,21 @@ impl DsiHost {
         display_config: DisplayConfig,
         dsi_config: DsiConfig,
         dsi: DSI,
-        clocks: &Clocks,
+        rcc: &mut Rcc,
     ) -> Result<DsiHost, Error> {
-        unsafe {
-            DSI::enable_unchecked();
-        }
+        DSI::enable(rcc);
 
         // Bring DSI peripheral out of reset
         dsi.cr().modify(|_, w| w.en().set_bit());
 
         //RCC_D1CCIPR: DSI clock from PHY is selected as DSI byte lane clock (default after reset)
-        let cycles_1ms = clocks.sysclk().raw() / 1_000;
+        let cycles_1ms = rcc.clocks.sysclk().raw() / 1_000;
 
         // Enable regulator
         dsi.wrpcr().modify(|_, w| w.regen().set_bit());
         // Wait for it to be ready
         block_with_timeout(
-            || dsi.wisr().read().rrs() == false,
+            || dsi.wisr().read().rrs().bit_is_clear(),
             DSI_TIMEOUT_MS,
             cycles_1ms,
             Error::RegTimeout,
@@ -201,7 +199,7 @@ impl DsiHost {
         cortex_m::asm::delay(cycles_1ms / 2);
         // Wait for the lock
         block_with_timeout(
-            || dsi.wisr().read().pllls() == false,
+            || dsi.wisr().read().pllls().bit_is_clear(),
             DSI_TIMEOUT_MS,
             cycles_1ms,
             Error::PllTimeout,
@@ -221,7 +219,7 @@ impl DsiHost {
         );
 
         // Configure the number of active data lanes
-        dsi.pcconfr()
+        dsi.pconfr()
             .modify(|_, w| unsafe { w.nl().bits(dsi_config.lane_count as u8) }); // 0b00 - 1 lanes, 0b01 - 2 lanes
 
         // Set TX escape clock division factor
@@ -244,7 +242,7 @@ impl DsiHost {
             / odf;
         let f_pix_khz = f_phy_hz / 1_000 / 8;
         let uix4 = 4_000_000_000 / f_phy_hz;
-        dsi.wpcr1()
+        dsi.wpcr0()
             .modify(|_, w| unsafe { w.uix4().bits(uix4 as u8) });
 
         match dsi_config.interrupts {
@@ -474,12 +472,12 @@ impl DsiHost {
             w.lp2hs_time().bits(phy_timers.dataline_lp2hs)
         });
         self.dsi
-            .pcconfr()
+            .pconfr()
             .modify(|_, w| unsafe { w.sw_time().bits(phy_timers.stop_wait_time) });
     }
 
     pub fn force_rx_low_power(&mut self, force: bool) {
-        self.dsi.wpcr2().modify(|_, w| w.flprxlpm().bit(force));
+        self.dsi.wpcr1().modify(|_, w| w.flprxlpm().bit(force));
     }
 
     fn long_write(&mut self, cmd: u8, buf: &[u8], ghcr_dt: u8) -> Result<(), Error> {
@@ -588,7 +586,7 @@ impl DsiHostCtrlIo for DsiHost {
         // debug!("DSI write: {:x?}", kind);
         // wait for command fifo to be empty
         block_with_timeout(
-            || self.dsi.gpsr().read().cmdfe() == false,
+            || self.dsi.gpsr().read().cmdfe().bit_is_clear(),
             DSI_TIMEOUT_MS,
             self.cycles_1ms,
             Error::FifoTimeout,

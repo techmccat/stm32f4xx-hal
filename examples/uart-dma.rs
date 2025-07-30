@@ -11,8 +11,7 @@ use cortex_m_rt::entry;
 use stm32f4xx_hal::dma::config::DmaConfig;
 use stm32f4xx_hal::pac::Interrupt;
 use stm32f4xx_hal::pac::{interrupt, DMA1};
-use stm32f4xx_hal::uart::config::StopBits;
-use stm32f4xx_hal::uart::{Config, Rx, Serial};
+use stm32f4xx_hal::serial::{config::StopBits, Config, Rx, Serial};
 use stm32f4xx_hal::{
     dma::{StreamsTuple, Transfer},
     pac,
@@ -128,12 +127,11 @@ pub fn uart3_write(data: &[u8]) -> Result<(), serial::Error> {
 fn main() -> ! {
     if let Some(dp) = pac::Peripherals::take() {
         // Set up the system clock.
-        let rcc = dp.RCC.constrain();
-        let clocks = rcc.cfgr.freeze();
+        let mut rcc = dp.RCC.constrain();
 
-        let dma1 = StreamsTuple::new(dp.DMA1);
+        let dma1 = StreamsTuple::new(dp.DMA1, &mut rcc);
 
-        let gpiod = dp.GPIOD.split();
+        let gpiod = dp.GPIOD.split(&mut rcc);
 
         // configure UART, it is important to configure this to use DMA
         let rx_3 = gpiod.pd9.into_alternate();
@@ -146,7 +144,7 @@ fn main() -> ! {
                 .parity_none()
                 .stopbits(StopBits::STOP1)
                 .dma(serial::config::DmaConfig::Rx),
-            &clocks,
+            &mut rcc,
         )
         .unwrap();
 

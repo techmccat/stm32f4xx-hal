@@ -22,6 +22,7 @@
 use core::ops::Deref;
 
 use crate::gpio::alt::SaiChannel;
+use crate::pac::RCC;
 #[cfg(feature = "sai2")]
 use crate::pac::SAI2;
 #[cfg(any(
@@ -142,20 +143,25 @@ pub struct Asynchronous;
 pub struct AsyncMaster<Ch: SaiChannel> {
     // TODO: Remove attribute when destroy function is implemented.
     #[allow(unused)]
-    pins: (Ch::Mclk, Ch::Fs, Ch::Sck, Ch::Sd),
+    pins: (Option<Ch::Mclk>, Ch::Fs, Ch::Sck, Ch::Sd),
 }
 
 impl<Ch: SaiChannel> AsyncMaster<Ch> {
     fn new(
         pins: (
-            impl Into<Ch::Mclk>,
+            Option<impl Into<Ch::Mclk>>,
             impl Into<Ch::Fs>,
             impl Into<Ch::Sck>,
             impl Into<Ch::Sd>,
         ),
     ) -> Self {
         Self {
-            pins: (pins.0.into(), pins.1.into(), pins.2.into(), pins.3.into()),
+            pins: (
+                pins.0.map(Into::into),
+                pins.1.into(),
+                pins.2.into(),
+                pins.3.into(),
+            ),
         }
     }
 }
@@ -164,20 +170,25 @@ impl<Ch: SaiChannel> AsyncMaster<Ch> {
 pub struct AsyncSlave<Ch: SaiChannel> {
     // TODO: Remove attribute when destroy function is implemented.
     #[allow(unused)]
-    pins: (Ch::Mclk, Ch::Fs, Ch::Sck, Ch::Sd),
+    pins: (Option<Ch::Mclk>, Ch::Fs, Ch::Sck, Ch::Sd),
 }
 
 impl<Ch: SaiChannel> AsyncSlave<Ch> {
     fn new(
         pins: (
-            impl Into<Ch::Mclk>,
+            Option<impl Into<Ch::Mclk>>,
             impl Into<Ch::Fs>,
             impl Into<Ch::Sck>,
             impl Into<Ch::Sd>,
         ),
     ) -> Self {
         Self {
-            pins: (pins.0.into(), pins.1.into(), pins.2.into(), pins.3.into()),
+            pins: (
+                pins.0.map(Into::into),
+                pins.1.into(),
+                pins.2.into(),
+                pins.3.into(),
+            ),
         }
     }
 }
@@ -237,19 +248,6 @@ macro_rules! sai_impl {
         pub type $SAIB = SAIB<$SAI>;
 
         impl Instance for $SAI {}
-
-        impl crate::Ptr for $SAI {
-            type RB = sai::RegisterBlock;
-            fn ptr() -> *const Self::RB {
-                Self::ptr()
-            }
-        }
-
-        impl crate::Steal for $SAI {
-            unsafe fn steal() -> Self {
-                Self::steal()
-            }
-        }
     };
 }
 
@@ -489,6 +487,7 @@ where
     /// Splits the SAI instance into two asynchronous sub-blocks.
     fn split(
         self,
+        rcc: &mut RCC,
     ) -> (
         SubBlock<SAIA<Self>, Asynchronous>,
         SubBlock<SAIB<Self>, Asynchronous>,
@@ -500,6 +499,7 @@ where
     /// block.
     fn split_sync_a(
         self,
+        rcc: &mut RCC,
     ) -> (
         SubBlock<SAIA<Self>, Synchronous>,
         SubBlock<SAIB<Self>, Asynchronous>,
@@ -511,6 +511,7 @@ where
     /// block.
     fn split_sync_b(
         self,
+        rcc: &mut RCC,
     ) -> (
         SubBlock<SAIA<Self>, Asynchronous>,
         SubBlock<SAIB<Self>, Synchronous>,
@@ -530,6 +531,7 @@ where
 {
     fn split(
         self,
+        rcc: &mut RCC,
     ) -> (
         SubBlock<SAIA<Self>, Asynchronous>,
         SubBlock<SAIB<Self>, Asynchronous>,
@@ -537,10 +539,8 @@ where
     where
         Self: Sized,
     {
-        unsafe {
-            SAI::enable_unchecked();
-            SAI::reset_unchecked();
-        }
+        SAI::enable(rcc);
+        SAI::reset(rcc);
         (
             SubBlock {
                 channel: SAIA::new(self),
@@ -557,6 +557,7 @@ where
 
     fn split_sync_a(
         self,
+        rcc: &mut RCC,
     ) -> (
         SubBlock<SAIA<Self>, Synchronous>,
         SubBlock<SAIB<Self>, Asynchronous>,
@@ -564,10 +565,8 @@ where
     where
         Self: Sized,
     {
-        unsafe {
-            SAI::enable_unchecked();
-            SAI::reset_unchecked();
-        }
+        SAI::enable(rcc);
+        SAI::reset(rcc);
         (
             SubBlock {
                 channel: SAIA::new(self),
@@ -584,6 +583,7 @@ where
 
     fn split_sync_b(
         self,
+        rcc: &mut RCC,
     ) -> (
         SubBlock<SAIA<Self>, Asynchronous>,
         SubBlock<SAIB<Self>, Synchronous>,
@@ -591,10 +591,8 @@ where
     where
         Self: Sized,
     {
-        unsafe {
-            SAI::enable_unchecked();
-            SAI::reset_unchecked();
-        }
+        SAI::enable(rcc);
+        SAI::reset(rcc);
         (
             SubBlock {
                 channel: SAIA::new(self),
@@ -622,7 +620,7 @@ where
     pub fn master_rx(
         self,
         pins: (
-            impl Into<Ch::Mclk>,
+            Option<impl Into<Ch::Mclk>>,
             impl Into<Ch::Fs>,
             impl Into<Ch::Sck>,
             impl Into<Ch::Sd>,
@@ -646,7 +644,7 @@ where
     pub fn master_tx(
         self,
         pins: (
-            impl Into<Ch::Mclk>,
+            Option<impl Into<Ch::Mclk>>,
             impl Into<Ch::Fs>,
             impl Into<Ch::Sck>,
             impl Into<Ch::Sd>,
@@ -670,7 +668,7 @@ where
     pub fn slave_rx(
         self,
         pins: (
-            impl Into<Ch::Mclk>,
+            Option<impl Into<Ch::Mclk>>,
             impl Into<Ch::Fs>,
             impl Into<Ch::Sck>,
             impl Into<Ch::Sd>,
@@ -691,7 +689,7 @@ where
     pub fn slave_tx(
         self,
         pins: (
-            impl Into<Ch::Mclk>,
+            Option<impl Into<Ch::Mclk>>,
             impl Into<Ch::Fs>,
             impl Into<Ch::Sck>,
             impl Into<Ch::Sd>,

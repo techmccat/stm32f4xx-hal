@@ -8,20 +8,23 @@
 #![no_main]
 
 use panic_semihosting as _;
-use stm32f4xx_hal as hal;
+use stm32f4xx_hal::{self as hal, rcc::Config};
 
 use crate::hal::{
     gpio::{Edge, Input, PA0},
     interrupt, pac,
     prelude::*,
-    rcc::{Clocks, Rcc},
+    rcc::Rcc,
     spi::{Mode, Phase, Polarity, Spi},
     timer::{CounterUs, Event, FTimer, Flag, Timer},
 };
 
-use core::cell::{Cell, RefCell};
 use core::fmt::Write;
 use core::ops::DerefMut;
+use core::{
+    cell::{Cell, RefCell},
+    convert::Infallible,
+};
 use cortex_m::interrupt::{free, CriticalSection, Mutex};
 use heapless::String;
 
@@ -34,6 +37,7 @@ use embedded_graphics::{
     primitives::{Circle, Line, PrimitiveStyle, PrimitiveStyleBuilder},
     text::Text,
 };
+use embedded_hal_bus::spi::ExclusiveDevice;
 use micromath::F32Ext;
 
 use ssd1306::{prelude::*, Ssd1306};
@@ -61,20 +65,31 @@ enum StopwatchState {
     Stopped,
 }
 
+struct DummyPin;
+impl embedded_hal::digital::ErrorType for DummyPin {
+    type Error = Infallible;
+}
+impl embedded_hal::digital::OutputPin for DummyPin {
+    fn set_high(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn set_low(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 #[entry]
 fn main() -> ! {
     let mut dp = pac::Peripherals::take().unwrap();
     let cp = cortex_m::peripheral::Peripherals::take().unwrap();
     dp.RCC.apb2enr().write(|w| w.syscfgen().enabled());
 
-    let rcc = dp.RCC.constrain();
+    let mut rcc = setup_clocks(dp.RCC);
 
-    let clocks = setup_clocks(rcc);
+    let mut syscfg = dp.SYSCFG.constrain(&mut rcc);
 
-    let mut syscfg = dp.SYSCFG.constrain();
-
-    let gpioa = dp.GPIOA.split();
-    let gpioe = dp.GPIOE.split();
+    let gpioa = dp.GPIOA.split(&mut rcc);
+    let gpioe = dp.GPIOE.split(&mut rcc);
 
     let mut board_btn = gpioa.pa0.into_pull_down_input();
     board_btn.make_interrupt_source(&mut syscfg);
@@ -94,37 +109,38 @@ fn main() -> ! {
 
     let spi = Spi::new(
         dp.SPI4,
-        (sck, miso, mosi),
+        (Some(sck), Some(miso), Some(mosi)),
         Mode {
             polarity: Polarity::IdleLow,
             phase: Phase::CaptureOnFirstTransition,
         },
         2000.kHz(),
-        &clocks,
+        &mut rcc,
     );
 
     // Set up the LEDs. On the stm32f429i-disco they are connected to pin PG13 and PG14.
-    let gpiog = dp.GPIOG.split();
+    let gpiog = dp.GPIOG.split(&mut rcc);
     let mut led3 = gpiog.pg13.into_push_pull_output();
     let mut led4 = gpiog.pg14.into_push_pull_output();
 
     let dc = gpioe.pe3.into_push_pull_output();
     let mut ss = gpioe.pe4.into_push_pull_output();
-    let mut delay = Timer::syst(cp.SYST, &clocks).delay();
+    let mut delay = Timer::syst(cp.SYST, &rcc.clocks).delay();
 
     ss.set_high();
     delay.delay_ms(100);
     ss.set_low();
 
     // Set up the display
-    let interface = SPIInterfaceNoCS::new(spi, dc);
+    let spi_device = ExclusiveDevice::new_no_delay(spi, DummyPin).unwrap();
+    let interface = SPIInterface::new(spi_device, dc);
     let mut disp = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
         .into_buffered_graphics_mode();
     disp.init().unwrap();
     disp.flush().unwrap();
 
     // Create a 1ms periodic interrupt from TIM2
-    let mut timer = FTimer::new(dp.TIM2, &clocks).counter();
+    let mut timer = FTimer::new(dp.TIM2, &mut rcc).counter();
     timer.start(1.secs()).unwrap();
     timer.listen(Event::Update);
 
@@ -205,13 +221,14 @@ fn main() -> ! {
     }
 }
 
-fn setup_clocks(rcc: Rcc) -> Clocks {
-    rcc.cfgr
-        .hclk(180.MHz())
-        .sysclk(180.MHz())
-        .pclk1(45.MHz())
-        .pclk2(90.MHz())
-        .freeze()
+fn setup_clocks(rcc: pac::RCC) -> Rcc {
+    rcc.freeze(
+        Config::hsi()
+            .hclk(180.MHz())
+            .sysclk(180.MHz())
+            .pclk1(45.MHz())
+            .pclk2(90.MHz()),
+    )
 }
 
 #[interrupt]

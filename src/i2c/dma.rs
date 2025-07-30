@@ -6,6 +6,8 @@ use crate::dma::{
     traits::{Channel, DMASet, DmaFlagExt, PeriAddress, Stream, StreamISR},
     ChannelX, MemoryToPeripheral, PeripheralToMemory, Transfer,
 };
+use crate::hal::i2c;
+use crate::i2c::dma::i2c::{ErrorType, Operation};
 use crate::ReadFlags;
 
 use nb;
@@ -460,9 +462,9 @@ where
     fn send_address(&mut self, addr: u8, read: bool) -> Result<(), super::Error> {
         let i2c = &self.hal_i2c.i2c;
 
-        let mut to_send_addr = u32::from(addr) << 1;
+        let mut to_send_addr = u16::from(addr) << 1;
         if read {
-            to_send_addr += 1;
+            to_send_addr |= 1;
         }
 
         // Set up current address, we're trying to talk to
@@ -598,6 +600,36 @@ where
         if self.rx.created() {
             self.rx.destroy_transfer();
         }
+    }
+}
+
+impl<I2C, TX_TRANSFER, RX_TRANSFER> ErrorType for I2CMasterDma<I2C, TX_TRANSFER, RX_TRANSFER>
+where
+    I2C: Instance,
+    TX_TRANSFER: DMATransfer<&'static [u8]>,
+    RX_TRANSFER: DMATransfer<&'static mut [u8]>,
+{
+    type Error = super::Error;
+}
+
+impl<I2C, TX_TRANSFER, RX_TRANSFER> i2c::I2c for I2CMasterDma<I2C, TX_TRANSFER, RX_TRANSFER>
+where
+    I2C: Instance,
+    TX_TRANSFER: DMATransfer<&'static [u8]>,
+    RX_TRANSFER: DMATransfer<&'static mut [u8]>,
+{
+    fn transaction(
+        &mut self,
+        addr: u8,
+        operations: &mut [Operation<'_>],
+    ) -> Result<(), Self::Error> {
+        for operation in operations {
+            match operation {
+                Operation::Read(dest) => self.hal_i2c.read(addr, dest),
+                Operation::Write(data) => self.hal_i2c.write(addr, data),
+            }?;
+        }
+        Ok(())
     }
 }
 

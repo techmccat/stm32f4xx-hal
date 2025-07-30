@@ -13,20 +13,15 @@ use stm32f4xx_hal::pac::interrupt;
 use stm32f4xx_hal::{
     dma::{config, MemoryToPeripheral, Stream4, StreamsTuple, Transfer},
     gpio::Speed,
-    pac,
+    pac::{self, SPI2},
     prelude::*,
     spi::*,
 };
 
 const ARRAY_SIZE: usize = 100;
 
-type SpiDma = Transfer<
-    Stream4<pac::DMA1>,
-    0,
-    Tx<pac::SPI2>,
-    MemoryToPeripheral,
-    &'static mut [u8; ARRAY_SIZE],
->;
+type SpiDma =
+    Transfer<Stream4<pac::DMA1>, 0, Tx<SPI2>, MemoryToPeripheral, &'static mut [u8; ARRAY_SIZE]>;
 
 static G_TRANSFER: Mutex<RefCell<Option<SpiDma>>> = Mutex::new(RefCell::new(None));
 
@@ -34,13 +29,12 @@ static G_TRANSFER: Mutex<RefCell<Option<SpiDma>>> = Mutex::new(RefCell::new(None
 fn main() -> ! {
     if let Some(dp) = pac::Peripherals::take() {
         // Set up the system clock.
-        let rcc = dp.RCC.constrain();
-        let clocks = rcc.cfgr.freeze();
+        let mut rcc = dp.RCC.constrain();
 
-        let steams = StreamsTuple::new(dp.DMA1);
+        let steams = StreamsTuple::new(dp.DMA1, &mut rcc);
         let stream = steams.4;
 
-        let gpiob = dp.GPIOB.split();
+        let gpiob = dp.GPIOB.split(&mut rcc);
 
         // Note. We set GPIO speed as VeryHigh to it corresponds to SPI frequency 3MHz.
         // Otherwise it may lead to the 'wrong last bit in every received byte' problem.
@@ -56,7 +50,13 @@ fn main() -> ! {
             phase: Phase::CaptureOnFirstTransition,
         };
 
-        let spi2 = Spi::new(dp.SPI2, (pb13, NoMiso::new(), pb15), mode, 3.MHz(), &clocks);
+        let spi2 = Spi::new(
+            dp.SPI2,
+            (Some(pb13), SPI2::NoMiso, Some(pb15)),
+            mode,
+            3.MHz(),
+            &mut rcc,
+        );
 
         let buffer = cortex_m::singleton!(: [u8; ARRAY_SIZE] = [1; ARRAY_SIZE]).unwrap();
 

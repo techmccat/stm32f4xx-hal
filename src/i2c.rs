@@ -5,7 +5,7 @@ use crate::rcc::{Enable, Reset};
 
 use crate::gpio;
 
-use crate::rcc::Clocks;
+use crate::rcc::Rcc;
 use fugit::{HertzU32 as Hertz, RateExtU32};
 
 mod common;
@@ -90,13 +90,6 @@ macro_rules! i2c {
         pub type $I2c = I2c<$I2C>;
 
         impl Instance for $I2C {}
-
-        impl crate::Ptr for $I2C {
-            type RB = i2c1::RegisterBlock;
-            fn ptr() -> *const Self::RB {
-                Self::ptr()
-            }
-        }
     };
 }
 
@@ -111,7 +104,7 @@ pub trait I2cExt: Sized + Instance {
         self,
         pins: (impl Into<Self::Scl>, impl Into<Self::Sda>),
         mode: impl Into<Mode>,
-        clocks: &Clocks,
+        rcc: &mut Rcc,
     ) -> I2c<Self>;
 }
 
@@ -120,9 +113,9 @@ impl<I2C: Instance> I2cExt for I2C {
         self,
         pins: (impl Into<Self::Scl>, impl Into<Self::Sda>),
         mode: impl Into<Mode>,
-        clocks: &Clocks,
+        rcc: &mut Rcc,
     ) -> I2c<Self> {
-        I2c::new(self, pins, mode, clocks)
+        I2c::new(self, pins, mode, rcc)
     }
 }
 
@@ -131,18 +124,16 @@ impl<I2C: Instance> I2c<I2C> {
         i2c: I2C,
         pins: (impl Into<I2C::Scl>, impl Into<I2C::Sda>),
         mode: impl Into<Mode>,
-        clocks: &Clocks,
+        rcc: &mut Rcc,
     ) -> Self {
-        unsafe {
-            // Enable and reset clock.
-            I2C::enable_unchecked();
-            I2C::reset_unchecked();
-        }
+        // Enable and reset clock.
+        I2C::enable(rcc);
+        I2C::reset(rcc);
 
         let pins = (pins.0.into(), pins.1.into());
 
         let i2c = I2c { i2c, pins };
-        i2c.i2c_init(mode, clocks.pclk1());
+        i2c.i2c_init(mode, rcc.clocks.pclk1());
         i2c
     }
 
@@ -287,14 +278,14 @@ impl<I2C: Instance> I2c<I2C> {
             Address::Seven(addr) => {
                 self.i2c
                     .dr()
-                    .write(|w| unsafe { w.bits(u32::from(addr) << 1) });
+                    .write(|w| unsafe { w.bits(u16::from(addr) << 1) });
             }
             Address::Ten(addr) => {
                 let [msbs, lsbs] = addr.to_be_bytes();
                 let msbs = ((msbs & 0b11) << 1) & 0b11110000;
                 let dr = self.i2c.dr();
-                dr.write(|w| unsafe { w.bits(u32::from(msbs)) });
-                dr.write(|w| unsafe { w.bits(u32::from(lsbs)) });
+                dr.write(|w| unsafe { w.bits(u16::from(msbs)) });
+                dr.write(|w| unsafe { w.bits(u16::from(lsbs)) });
             }
         }
 
@@ -348,20 +339,20 @@ impl<I2C: Instance> I2c<I2C> {
             Address::Seven(addr) => {
                 self.i2c
                     .dr()
-                    .write(|w| unsafe { w.bits((u32::from(addr) << 1) | 1) });
+                    .write(|w| unsafe { w.bits((u16::from(addr) << 1) | 1) });
             }
             Address::Ten(addr) => {
                 let [msbs, lsbs] = addr.to_be_bytes();
                 let msbs = ((msbs & 0b11) << 1) | 0b11110000;
                 let dr = self.i2c.dr();
                 if first_transaction {
-                    dr.write(|w| unsafe { w.bits(u32::from(msbs)) });
-                    dr.write(|w| unsafe { w.bits(u32::from(lsbs)) });
+                    dr.write(|w| unsafe { w.bits(u16::from(msbs)) });
+                    dr.write(|w| unsafe { w.bits(u16::from(lsbs)) });
                 }
                 self.i2c.cr1().modify(|_, w| w.start().set_bit());
                 // Wait until START condition was generated
                 while self.i2c.sr1().read().sb().bit_is_clear() {}
-                dr.write(|w| unsafe { w.bits(u32::from(msbs | 1)) });
+                dr.write(|w| unsafe { w.bits(u16::from(msbs | 1)) });
             }
         }
 
@@ -401,7 +392,7 @@ impl<I2C: Instance> I2c<I2C> {
         {}
 
         // Push out a byte of data
-        self.i2c.dr().write(|w| unsafe { w.bits(u32::from(byte)) });
+        self.i2c.dr().write(|w| unsafe { w.bits(u16::from(byte)) });
 
         // Wait until byte is transferred
         // Check for any potential error conditions.
@@ -662,3 +653,30 @@ macro_rules! transaction_impl {
     };
 }
 use transaction_impl;
+
+impl<I2C: Instance> embedded_hal_02::blocking::i2c::WriteIter for I2c<I2C> {
+    type Error = Error;
+
+    fn write<B>(&mut self, addr: u8, bytes: B) -> Result<(), Self::Error>
+    where
+        B: IntoIterator<Item = u8>,
+    {
+        self.write_iter(addr, bytes)
+    }
+}
+
+impl<I2C: Instance> embedded_hal_02::blocking::i2c::WriteIterRead for I2c<I2C> {
+    type Error = Error;
+
+    fn write_iter_read<B>(
+        &mut self,
+        addr: u8,
+        bytes: B,
+        buffer: &mut [u8],
+    ) -> Result<(), Self::Error>
+    where
+        B: IntoIterator<Item = u8>,
+    {
+        self.write_iter_read(addr, bytes, buffer)
+    }
+}
